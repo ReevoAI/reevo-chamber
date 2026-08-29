@@ -1,5 +1,9 @@
 # Chamber
 
+> **Reevo fork.** This is a private fork of [`segmentio/chamber`](https://github.com/segmentio/chamber).
+> It tracks upstream but pins Go to a supported version and publishes its image to our private ECR
+> instead of Docker Hub. See [`docs/FORK.md`](./docs/FORK.md) and [`docs/ECR.md`](./docs/ECR.md).
+
 Chamber is a tool for managing secrets. Currently it does so by storing
 secrets in SSM Parameter Store, an AWS service for storing secrets.
 
@@ -533,6 +537,10 @@ public github releases.
 To cut a new release, just push a tag named `v<semver>` where `<semver>` is a
 valid semver version. This tag will be used by Github Actions to automatically publish
 a github release.
+
+In this fork the release workflow also builds the multi-arch container image and pushes it to our
+private ECR (not Docker Hub). See [`docs/ECR.md`](./docs/ECR.md) for setup and for how to pull the
+image.
 
 ---
 

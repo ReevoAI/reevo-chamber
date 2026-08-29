@@ -15,7 +15,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: 1.25.x
+          go-version: 1.27.x
 
       - name: Install nfpm, rpmbuild
         run: sudo make -f Makefile.tools nfpm-debian rpmbuild-debian
@@ -50,22 +50,15 @@ jobs:
           files: |
             dist/*
 
-  publish-dockerhub:
+  publish-ecr:
     runs-on: ubuntu-latest
     needs: dist
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: "dist/*"
-
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: 1.25.x
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -73,11 +66,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USER }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          role-to-assume: ${{ vars.ECR_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Release
-        run: make -f Makefile.release publish-dockerhub
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push to ECR
+        run: make -f Makefile.release publish-ecr
+        env:
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECR_REPO: ${{ vars.ECR_REPO }}
+          FORK_SUFFIX: ${{ vars.FORK_SUFFIX }}
