@@ -19,6 +19,7 @@ of truth when resolving an upstream merge conflict (resolve **in our favor** for
 | Go CI matrix | `.github/workflows/build.yml`, `.github/workflows/release.yml` | Test/build/release on the two Go majors still in Go's security-support window (currently `1.27.x`, `1.26.x`). |
 | Go module floor | `go.mod` (`go` directive) | Set to the oldest major we test (currently `1.26.0`). |
 | Image registry | `Makefile.release` (`publish-ecr`), `.github/workflows/release.yml` (`publish-ecr` job) | Replaced Docker Hub publishing (`segment/chamber`) with a push to our **private ECR** using GitHub OIDC (no long-lived AWS keys). See [`docs/ECR.md`](./ECR.md). |
+| Action pinning | `.github/workflows/*.yml` | All third-party actions upgraded to their latest release and pinned to a full commit SHA (with a `# vX.Y.Z` comment) for supply-chain hardening. When bumping, update both the SHA and the comment. |
 | Docs | `docs/ECR.md`, `docs/FORK.md` | Fork-specific operational docs. |
 
 Unchanged from upstream: all Go source, the module path, `WORKDIR`, and the Codecov slug
