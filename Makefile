@@ -4,7 +4,9 @@
 #
 # This makefile is meant for humans
 
-ifndef VERSION
+# Use strip/ifeq (not ifndef) so an empty-but-defined VERSION from the CI env
+# (e.g. `VERSION: ${{ inputs.version }}` on a tag push) still falls back to git.
+ifeq ($(strip $(VERSION)),)
 	VERSION := $(shell git describe --tags --always --dirty="-dev")
 endif
 

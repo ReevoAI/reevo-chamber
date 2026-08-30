@@ -72,13 +72,34 @@ Settings → Secrets and variables → Actions → **Variables**:
 | `ECR_REPO` | `vendored/chamber` | Optional; defaults to `vendored/chamber`. |
 | `FORK_SUFFIX` | `reevo.1` | Optional fork build marker. |
 
-## Releasing (CI)
+## Releasing via a tag (CI)
 
-Push a tag; the `Release` workflow builds multi-arch (`linux/amd64,linux/arm64`) and pushes to ECR:
+Push a semver tag; the `Release` workflow builds multi-arch (`linux/amd64,linux/arm64`), pushes to
+ECR, and creates a GitHub release with the binaries. The `-reevo.N` image tag comes from the
+`FORK_SUFFIX` repo variable (not the git tag), so a clean semver tag is all you need:
 
 ```
-git tag v3.1.0-reevo.1
-git push origin v3.1.0-reevo.1
+git tag v3.1.0
+git push origin v3.1.0
+```
+
+The tag filter is strict: `vMAJOR.MINOR.PATCH` always matches; the prerelease form only allows a
+single-digit patch and an alphanumeric suffix with no dots (so `v3.1.0-rc1` matches, `v3.1.0-reevo.1`
+does not — use the manual run below if you want to control the fork suffix per build).
+
+## Manual run via the GitHub UI (ECR-only)
+
+The `Release` workflow also supports `workflow_dispatch`, so you can build and push to ECR on demand
+without cutting a release:
+
+1. GitHub → **Actions** → **Release** → **Run workflow**.
+2. Pick the branch, enter **version** (e.g. `v3.1.0`) and **fork_suffix** (e.g. `reevo.2`), and run.
+
+This builds the image from the selected branch and pushes tags `3.1.0-reevo.2`, `3.1.0`, `3.1`, `3`,
+`latest` to ECR. No GitHub release is created (that happens only on tag pushes). The CLI equivalent:
+
+```
+gh workflow run Release -f version=v3.1.0 -f fork_suffix=reevo.2
 ```
 
 ## Publishing manually (local)
