@@ -5,19 +5,35 @@
 
 include Makefile
 
-# set --pre-release if not tagged or tree is dirty or there's a `-` in the tag
-ifneq (,$(findstring -,$(VERSION)))
-	DOCKERHUB_TAG_PREFIX := "prerelease-"
+# Private ECR publishing for the Reevo fork.
+# Configure these from CI (GitHub Actions variables) or on the command line:
+#   ECR_REGISTRY - required, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com
+#   ECR_REPO     - defaults to vendored/chamber
+#   FORK_SUFFIX  - optional fork build marker appended to the full version tag,
+#                  e.g. FORK_SUFFIX=reevo.1 -> :v3.1.0-reevo.1
+# Use strip/ifeq (not ?=/ifdef) so an empty-but-defined value from CI env
+# (GitHub renders an unset `vars.*` as an empty string) falls back to the default.
+ifeq ($(strip $(ECR_REPO)),)
+	ECR_REPO := vendored/chamber
 endif
 
-publish-dockerhub:
+# When FORK_SUFFIX is set, the full-version tag becomes <version>-<suffix>.
+ifeq ($(strip $(FORK_SUFFIX)),)
+	ECR_FULL_TAG := $(VERSION_NO_V)
+else
+	ECR_FULL_TAG := $(VERSION_NO_V)-$(FORK_SUFFIX)
+endif
+
+publish-ecr:
+	@test -n "$(ECR_REGISTRY)" || { echo "ECR_REGISTRY is required"; exit 1; }
 	docker buildx build \
-		-t segment/chamber:$(DOCKERHUB_TAG_PREFIX)$(VERSION_MAJOR_MINOR_PATCH) \
-		-t segment/chamber:$(DOCKERHUB_TAG_PREFIX)$(VERSION_MAJOR_MINOR) \
-		-t segment/chamber:$(DOCKERHUB_TAG_PREFIX)$(VERSION_MAJOR) \
-		-t segment/chamber:$(DOCKERHUB_TAG_PREFIX)$(VERSION_NO_V) \
+		-t $(ECR_REGISTRY)/$(ECR_REPO):$(ECR_FULL_TAG) \
+		-t $(ECR_REGISTRY)/$(ECR_REPO):$(VERSION_MAJOR_MINOR_PATCH) \
+		-t $(ECR_REGISTRY)/$(ECR_REPO):$(VERSION_MAJOR_MINOR) \
+		-t $(ECR_REGISTRY)/$(ECR_REPO):$(VERSION_MAJOR) \
+		-t $(ECR_REGISTRY)/$(ECR_REPO):latest \
 		--build-arg VERSION=$(VERSION) \
-    --platform linux/amd64,linux/arm64 \
+		--platform linux/amd64,linux/arm64 \
 		--push \
 		.
 
@@ -36,4 +52,4 @@ dist/chamber_$(VERSION)_amd64.rpm: dist/nfpm-$(VERSION).yaml dist/chamber-$(VERS
 	nfpm -f $< pkg --target $@
 
 .PHONY: \
-	publish-dockerhub
+	publish-ecr
