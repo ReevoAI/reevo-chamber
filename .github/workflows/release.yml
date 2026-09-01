@@ -5,8 +5,21 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]-[a-zA-Z0-9]+"
 
+  # Manual, on-demand build that only pushes the image to ECR (no GitHub release).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp/tag, e.g. v3.1.0"
+        required: true
+      fork_suffix:
+        description: "Fork build marker, e.g. reevo.2 -> image tag <version>-reevo.2"
+        required: true
+        default: "reevo.1"
+
 jobs:
   dist:
+    # Distributables + GitHub release are for tag pushes only; manual runs are ECR-only.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -28,6 +41,7 @@ jobs:
           path: "dist/*"
 
   publish-github-release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -51,8 +65,9 @@ jobs:
             dist/*
 
   publish-ecr:
+    # Runs on both tag pushes and manual workflow_dispatch. Builds the image from
+    # source, so it does not depend on the dist job.
     runs-on: ubuntu-latest
-    needs: dist
     permissions:
       id-token: write
       contents: read
@@ -78,6 +93,9 @@ jobs:
       - name: Build and push to ECR
         run: make -f Makefile.release publish-ecr
         env:
+          # On tag pushes VERSION is empty here, so the Makefile derives it from
+          # the git tag. On manual runs it comes from the workflow input.
+          VERSION: ${{ inputs.version }}
+          FORK_SUFFIX: ${{ inputs.fork_suffix || vars.FORK_SUFFIX }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
           ECR_REPO: ${{ vars.ECR_REPO }}
-          FORK_SUFFIX: ${{ vars.FORK_SUFFIX }}
