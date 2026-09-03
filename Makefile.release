@@ -34,6 +34,7 @@ publish-ecr:
 		-t $(ECR_REGISTRY)/$(ECR_REPO):latest \
 		--build-arg VERSION=$(VERSION) \
 		--platform linux/arm64 \
+		--provenance=false \
 		--push \
 		.
 
