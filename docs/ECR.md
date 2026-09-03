@@ -5,10 +5,14 @@ CI pushes automatically on release tags using GitHub OIDC (no long-lived AWS key
 manually with the `publish-ecr` Make target.
 
 - ECR repo: `vendored/chamber` (the `vendored/` namespace signals an externally-derived image).
-- Image tags per release: `<version>-<fork-suffix>`, `<major.minor.patch>`, `<major.minor>`,
-  `<major>`, and `latest`. The leading `v` is stripped, so git tag `v3.1.0-reevo.1` →
-  image tag `3.1.0-reevo.1`.
-- The `-reevo.N` suffix denotes our Nth build on top of that upstream version.
+- Image tag per release: a **single, fully-specific tag** `<major.minor.patch>-reevo.N`. The leading
+  `v` is stripped, so upstream version `v3.1.0` → image tag `3.1.0-reevo.1`. No floating tags
+  (`latest`, `<major>`, `<major.minor>`, `<major.minor.patch>`) are pushed, so the repository can
+  enforce an **immutable tag policy** — every push is a unique name and never collides.
+- The `-reevo.N` suffix denotes our Nth build on top of that upstream version. `N` is **computed
+  automatically** at release time: CI lists the existing `<version>-reevo.*` tags in ECR, takes the
+  highest `N`, and adds 1. When the upstream version changes, no tags match the new prefix, so `N`
+  resets to `1`. You can override it with the `fork_suffix` input on a manual run.
 
 ## One-time setup
 
@@ -18,7 +22,18 @@ manually with the `publish-ecr` Make target.
 aws ecr create-repository \
   --repository-name vendored/chamber \
   --region <region> \
+  --image-tag-mutability IMMUTABLE \
   --image-scanning-configuration scanOnPush=true
+```
+
+The `IMMUTABLE` policy is safe here because each release pushes exactly one unique
+`<version>-reevo.N` tag (no floating tags). To flip an existing repository:
+
+```
+aws ecr put-image-tag-mutability \
+  --repository-name vendored/chamber \
+  --image-tag-mutability IMMUTABLE \
+  --region <region>
 ```
 
 ### 2. Create the GitHub OIDC provider + IAM role
@@ -38,7 +53,8 @@ identity provider. Then create a role whose **trust policy** restricts to this r
 }
 ```
 
-Attach a **permissions policy** granting ECR push:
+Attach a **permissions policy** granting ECR push and image listing (the release workflow lists
+existing tags to compute the next `-reevo.N`):
 
 ```json
 {
@@ -52,7 +68,8 @@ Attach a **permissions policy** granting ECR push:
         "ecr:InitiateLayerUpload",
         "ecr:UploadLayerPart",
         "ecr:CompleteLayerUpload",
-        "ecr:PutImage"
+        "ecr:PutImage",
+        "ecr:ListImages"
       ],
       "Resource": "arn:aws:ecr:<region>:<account-id>:repository/vendored/chamber"
     }
@@ -70,13 +87,17 @@ Settings → Secrets and variables → Actions → **Variables**:
 | `AWS_REGION` | `us-east-1` | |
 | `ECR_REGISTRY` | `123456789012.dkr.ecr.us-east-1.amazonaws.com` | Registry host. |
 | `ECR_REPO` | `vendored/chamber` | Optional; defaults to `vendored/chamber`. |
-| `FORK_SUFFIX` | `reevo.1` | Optional fork build marker. |
+
+> `FORK_SUFFIX` is no longer configured as a repo variable — the `-reevo.N` suffix is computed
+> automatically from the tags already in ECR (see below). It can still be overridden per manual run
+> via the `fork_suffix` input, and the Make target still honors a `FORK_SUFFIX` env var for local use.
 
 ## Releasing via a tag (CI)
 
-Push a semver tag; the `Release` workflow builds multi-arch (`linux/amd64,linux/arm64`), pushes to
-ECR, and creates a GitHub release with the binaries. The `-reevo.N` image tag comes from the
-`FORK_SUFFIX` repo variable (not the git tag), so a clean semver tag is all you need:
+Push a semver tag; the `Release` workflow builds for `linux/arm64`, pushes a single immutable tag to
+ECR, and creates a GitHub release with the binaries. The `-reevo.N` suffix is computed automatically
+at release time (CI reads the existing `<version>-reevo.*` tags in ECR and increments; it resets to
+`reevo.1` whenever the upstream version changes), so a clean semver tag is all you need:
 
 ```
 git tag v3.1.0
@@ -93,13 +114,15 @@ The `Release` workflow also supports `workflow_dispatch`, so you can build and p
 without cutting a release:
 
 1. GitHub → **Actions** → **Release** → **Run workflow**.
-2. Pick the branch, enter **version** (e.g. `v3.1.0`) and **fork_suffix** (e.g. `reevo.2`), and run.
+2. Pick the branch, enter **version** (e.g. `v3.1.0`), optionally set **fork_suffix** to override the
+   auto-computed marker (leave blank to auto-increment `reevo.N`), and run.
 
-This builds the image from the selected branch and pushes tags `3.1.0-reevo.2`, `3.1.0`, `3.1`, `3`,
-`latest` to ECR. No GitHub release is created (that happens only on tag pushes). The CLI equivalent:
+This builds the image from the selected branch and pushes a single tag (e.g. `3.1.0-reevo.2`) to ECR.
+No GitHub release is created (that happens only on tag pushes). The CLI equivalent:
 
 ```
-gh workflow run Release -f version=v3.1.0 -f fork_suffix=reevo.2
+gh workflow run Release -f version=v3.1.0                    # auto-increment reevo.N
+gh workflow run Release -f version=v3.1.0 -f fork_suffix=reevo.2   # explicit override
 ```
 
 ## Publishing manually (local)

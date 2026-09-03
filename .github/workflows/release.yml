@@ -12,9 +12,8 @@ on:
         description: "Version to stamp/tag, e.g. v3.1.0"
         required: true
       fork_suffix:
-        description: "Fork build marker, e.g. reevo.2 -> image tag <version>-reevo.2"
-        required: true
-        default: "reevo.1"
+        description: "Optional override for the fork marker (e.g. reevo.5). Leave blank to auto-increment reevo.N."
+        required: false
 
 jobs:
   dist:
@@ -90,12 +89,56 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
+      - name: Compute reevo build number
+        id: forksuffix
+        env:
+          ECR_REPO: ${{ vars.ECR_REPO }}
+          INPUT_VERSION: ${{ inputs.version }}
+          OVERRIDE: ${{ inputs.fork_suffix }}
+        run: |
+          set -euo pipefail
+
+          # An explicit override (manual run) wins; otherwise auto-compute.
+          if [ -n "${OVERRIDE:-}" ]; then
+            echo "fork_suffix=${OVERRIDE}" >> "$GITHUB_OUTPUT"
+            echo "Using overridden fork suffix: ${OVERRIDE}"
+            exit 0
+          fi
+
+          # Base version without leading v: the manual input, or the pushed tag.
+          RAW="${INPUT_VERSION:-${GITHUB_REF#refs/tags/}}"
+          BASE="${RAW#v}"
+
+          # Must match the ECR_REPO default in Makefile.release.
+          REPO="${ECR_REPO:-vendored/chamber}"
+
+          # The immutable ECR tags are the source of truth for the counter: find the
+          # highest existing <base>-reevo.N, then +1. When BASE changes, nothing
+          # matches the prefix, so N resets to 1 automatically.
+          # Fail loudly if the listing errors (e.g. missing ecr:ListImages or the
+          # repo doesn't exist): silently defaulting to reevo.1 would collide under
+          # an immutable tag policy. An existing-but-empty repo returns no tags (ok).
+          if ! TAGS=$(aws ecr list-images \
+                        --repository-name "$REPO" \
+                        --filter tagStatus=TAGGED \
+                        --query "imageIds[].imageTag" --output text 2>&1); then
+            echo "::error::Could not list images for '$REPO' (needs ecr:ListImages and the repo must exist): $TAGS"
+            exit 1
+          fi
+          MAX=$(printf '%s' "$TAGS" | tr '[:space:]' '\n' \
+                  | sed -nE "s/^${BASE}-reevo\.([0-9]+)$/\1/p" \
+                  | sort -n | tail -1)
+          if [ -z "${MAX:-}" ]; then N=1; else N=$((MAX + 1)); fi
+
+          echo "fork_suffix=reevo.$N" >> "$GITHUB_OUTPUT"
+          echo "Base ${BASE} -> reevo.$N"
+
       - name: Build and push to ECR
         run: make -f Makefile.release publish-ecr
         env:
           # On tag pushes VERSION is empty here, so the Makefile derives it from
           # the git tag. On manual runs it comes from the workflow input.
           VERSION: ${{ inputs.version }}
-          FORK_SUFFIX: ${{ inputs.fork_suffix || vars.FORK_SUFFIX }}
+          FORK_SUFFIX: ${{ steps.forksuffix.outputs.fork_suffix }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
           ECR_REPO: ${{ vars.ECR_REPO }}
