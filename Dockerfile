@@ -10,9 +10,13 @@ RUN test -n "${VERSION}"
 RUN apk add -U make ca-certificates
 RUN make linux VERSION=${VERSION} TARGETARCH=${TARGETARCH}
 
+# Assemble the final rootfs so it ships to ECR as a single layer.
+RUN mkdir -p /rootfs/etc/ssl/certs && \
+    cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ && \
+    cp chamber /rootfs/chamber
+
 FROM scratch AS run
 
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /go/src/github.com/segmentio/chamber/chamber /chamber
+COPY --from=build /rootfs/ /
 
 ENTRYPOINT ["/chamber"]
