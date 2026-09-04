@@ -1,18 +1,19 @@
 # Publishing & consuming chamber from private ECR
 
 This fork publishes its container image to a **private Amazon ECR** repository instead of Docker Hub.
-CI pushes automatically on release tags using GitHub OIDC (no long-lived AWS keys); you can also push
-manually with the `publish-ecr` Make target.
+CI pushes when you run the `Release` workflow (see below); you can also push manually with the
+`publish-ecr` Make target.
 
 - ECR repo: `vendored/chamber` (the `vendored/` namespace signals an externally-derived image).
-- Image tag per release: a **single, fully-specific tag** `<major.minor.patch>-reevo.N`. The leading
-  `v` is stripped, so upstream version `v3.1.0` → image tag `3.1.0-reevo.1`. No floating tags
-  (`latest`, `<major>`, `<major.minor>`, `<major.minor.patch>`) are pushed, so the repository can
-  enforce an **immutable tag policy** — every push is a unique name and never collides.
+- Image tag per release: a **single, fully-specific tag** `<major.minor.patch>-reevo.N`. The base
+  `<major.minor.patch>` is read from the repo's [`VERSION`](../VERSION) file (a leading `v` is
+  stripped), so `VERSION=3.1.0` → image tag `3.1.0-reevo.1`. No floating tags (`latest`, `<major>`,
+  `<major.minor>`, `<major.minor.patch>`) are pushed, so the repository can enforce an **immutable
+  tag policy** — every push is a unique name and never collides.
 - The `-reevo.N` suffix denotes our Nth build on top of that upstream version. `N` is **computed
   automatically** at release time: CI lists the existing `<version>-reevo.*` tags in ECR, takes the
-  highest `N`, and adds 1. When the upstream version changes, no tags match the new prefix, so `N`
-  resets to `1`. You can override it with the `fork_suffix` input on a manual run.
+  highest `N`, and adds 1. When you bump `VERSION`, no tags match the new prefix, so `N` resets to
+  `1`.
 
 ## One-time setup
 
@@ -39,7 +40,7 @@ aws ecr put-image-tag-mutability \
 ### 2. Create the GitHub OIDC provider + IAM role
 
 If the account doesn't already have it, add `token.actions.githubusercontent.com` as an IAM OIDC
-identity provider. Then create a role whose **trust policy** restricts to this repo's tags:
+identity provider. Then create a role whose **trust policy** restricts to this repo's release branch:
 
 ```json
 {
@@ -48,10 +49,14 @@ identity provider. Then create a role whose **trust policy** restricts to this r
   "Action": "sts:AssumeRoleWithWebIdentity",
   "Condition": {
     "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-    "StringLike":   { "token.actions.githubusercontent.com:sub": "repo:ReevoAI/chamber:ref:refs/tags/*" }
+    "StringLike":   { "token.actions.githubusercontent.com:sub": "repo:ReevoAI/chamber:ref:refs/heads/main" }
   }
 }
 ```
+
+> The `Release` workflow runs from a branch (normally `main`), not a tag, so the OIDC `sub` is
+> `repo:ReevoAI/chamber:ref:refs/heads/main`. The workflow's **Print OIDC sub claim** step logs the
+> exact subject, so you can widen or adjust this condition (e.g. to run releases from another branch).
 
 Attach a **permissions policy** granting ECR push and image listing (the release workflow lists
 existing tags to compute the next `-reevo.N`):
@@ -88,46 +93,34 @@ Settings → Secrets and variables → Actions → **Variables**:
 | `ECR_REGISTRY` | `123456789012.dkr.ecr.us-east-1.amazonaws.com` | Registry host. |
 | `ECR_REPO` | `vendored/chamber` | Optional; defaults to `vendored/chamber`. |
 
-> `FORK_SUFFIX` is no longer configured as a repo variable — the `-reevo.N` suffix is computed
-> automatically from the tags already in ECR (see below). It can still be overridden per manual run
-> via the `fork_suffix` input, and the Make target still honors a `FORK_SUFFIX` env var for local use.
+> Neither the base version nor the `-reevo.N` suffix is a repo variable: the base comes from the
+> [`VERSION`](../VERSION) file, and `-reevo.N` is computed automatically from the tags already in ECR.
+> The Make target still honors a `FORK_SUFFIX` env var for local use.
 
-## Releasing via a tag (CI)
+## Releasing
 
-Push a semver tag; the `Release` workflow builds for `linux/arm64`, pushes a single immutable tag to
-ECR, and creates a GitHub release with the binaries. The `-reevo.N` suffix is computed automatically
-at release time (CI reads the existing `<version>-reevo.*` tags in ECR and increments; it resets to
-`reevo.1` whenever the upstream version changes), so a clean semver tag is all you need:
+The base version lives in the [`VERSION`](../VERSION) file (e.g. `3.1.0`) — the only thing you bump by
+hand. The `-reevo.N` build number is automatic, and there is no version or tag input to fill in.
 
-```
-git tag v3.1.0
-git push origin v3.1.0
-```
+1. To move to a new upstream base, edit `VERSION` and merge it (normal PR). To cut another build on
+   the current base, skip this step.
+2. GitHub → **Actions** → **Release** → **Run workflow** (from `main`). With no inputs it reads
+   `VERSION`, computes the next `-reevo.N` from ECR, builds for `linux/arm64`, and pushes the single
+   immutable tag `<version>-reevo.N`. No GitHub release is created.
 
-The tag filter is strict: `vMAJOR.MINOR.PATCH` always matches; the prerelease form only allows a
-single-digit patch and an alphanumeric suffix with no dots (so `v3.1.0-rc1` matches, `v3.1.0-reevo.1`
-does not — use the manual run below if you want to control the fork suffix per build).
-
-## Manual run via the GitHub UI (ECR-only)
-
-The `Release` workflow also supports `workflow_dispatch`, so you can build and push to ECR on demand
-without cutting a release:
-
-1. GitHub → **Actions** → **Release** → **Run workflow**.
-2. Pick the branch, enter **version** (e.g. `v3.1.0`), optionally set **fork_suffix** to override the
-   auto-computed marker (leave blank to auto-increment `reevo.N`), and run.
-
-This builds the image from the selected branch and pushes a single tag (e.g. `3.1.0-reevo.2`) to ECR.
-No GitHub release is created (that happens only on tag pushes). The CLI equivalent:
+CLI equivalent:
 
 ```
-gh workflow run Release -f version=v3.1.0                    # auto-increment reevo.N
-gh workflow run Release -f version=v3.1.0 -f fork_suffix=reevo.2   # explicit override
+gh workflow run Release --ref main
 ```
+
+Re-running without bumping `VERSION` just produces the next `-reevo.N` on the same base
+(`3.1.0-reevo.1`, `3.1.0-reevo.2`, …).
 
 ## Publishing manually (local)
 
-Requires Docker (with buildx) and AWS credentials for an identity allowed to push:
+Requires Docker (with buildx) and AWS credentials for an identity allowed to push. Locally you pass
+`VERSION` and `FORK_SUFFIX` explicitly (CI derives them from the `VERSION` file and ECR):
 
 ```
 aws ecr get-login-password --region <region> \
