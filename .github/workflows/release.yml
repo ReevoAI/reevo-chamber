@@ -1,71 +1,12 @@
 name: Release
+# ECR-only release. The base version is tracked in the repo's VERSION file
+# (bumped via PR); the -reevo.N fork suffix is computed automatically from the
+# tags already in ECR. There is no version/tag input and no GitHub release.
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]-[a-zA-Z0-9]+"
-
-  # Manual, on-demand build that only pushes the image to ECR (no GitHub release).
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to stamp/tag, e.g. v3.1.0"
-        required: true
-      fork_suffix:
-        description: "Optional override for the fork marker (e.g. reevo.5). Leave blank to auto-increment reevo.N."
-        required: false
 
 jobs:
-  dist:
-    # Distributables + GitHub release are for tag pushes only; manual runs are ECR-only.
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.27.x
-
-      - name: Install nfpm, rpmbuild
-        run: sudo make -f Makefile.tools nfpm-debian rpmbuild-debian
-
-      - name: Make distributables
-        run: make -f Makefile.release dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: dist
-          path: "dist/*"
-
-  publish-github-release:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    needs: dist
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist
-          path: "dist"
-
-      - name: Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            dist/*
-
   publish-ecr:
-    # Runs on both tag pushes and manual workflow_dispatch. Builds the image from
-    # source, so it does not depend on the dist job.
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -109,25 +50,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      - name: Compute reevo build number
-        id: forksuffix
+      - name: Compute version and reevo build number
+        id: version
         env:
           ECR_REPO: ${{ vars.ECR_REPO }}
-          INPUT_VERSION: ${{ inputs.version }}
-          OVERRIDE: ${{ inputs.fork_suffix }}
         run: |
           set -euo pipefail
 
-          # An explicit override (manual run) wins; otherwise auto-compute.
-          if [ -n "${OVERRIDE:-}" ]; then
-            echo "fork_suffix=${OVERRIDE}" >> "$GITHUB_OUTPUT"
-            echo "Using overridden fork suffix: ${OVERRIDE}"
-            exit 0
-          fi
-
-          # Base version without leading v: the manual input, or the pushed tag.
-          RAW="${INPUT_VERSION:-${GITHUB_REF#refs/tags/}}"
-          BASE="${RAW#v}"
+          # Base version is tracked in the VERSION file (bumped via PR). Strip any
+          # leading v and surrounding whitespace.
+          BASE="$(tr -d '[:space:]' < VERSION)"
+          BASE="${BASE#v}"
+          test -n "$BASE" || { echo "::error::VERSION file is empty"; exit 1; }
 
           # Must match the ECR_REPO default in Makefile.release.
           REPO="${ECR_REPO:-vendored/chamber}"
@@ -150,15 +84,14 @@ jobs:
                   | sort -n | tail -1)
           if [ -z "${MAX:-}" ]; then N=1; else N=$((MAX + 1)); fi
 
+          echo "version=v${BASE}" >> "$GITHUB_OUTPUT"
           echo "fork_suffix=reevo.$N" >> "$GITHUB_OUTPUT"
-          echo "Base ${BASE} -> reevo.$N"
+          echo "Base ${BASE} -> ${BASE}-reevo.$N"
 
       - name: Build and push to ECR
         run: make -f Makefile.release publish-ecr
         env:
-          # On tag pushes VERSION is empty here, so the Makefile derives it from
-          # the git tag. On manual runs it comes from the workflow input.
-          VERSION: ${{ inputs.version }}
-          FORK_SUFFIX: ${{ steps.forksuffix.outputs.fork_suffix }}
+          VERSION: ${{ steps.version.outputs.version }}
+          FORK_SUFFIX: ${{ steps.version.outputs.fork_suffix }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
           ECR_REPO: ${{ vars.ECR_REPO }}

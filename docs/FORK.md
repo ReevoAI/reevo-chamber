@@ -19,6 +19,8 @@ of truth when resolving an upstream merge conflict (resolve **in our favor** for
 | Go CI matrix | `.github/workflows/build.yml`, `.github/workflows/release.yml` | Test/build/release on the two Go majors still in Go's security-support window (currently `1.27.x`, `1.26.x`). |
 | Go module floor | `go.mod` (`go` directive) | Set to the oldest major we test (currently `1.26.0`). |
 | Image registry | `Makefile.release` (`publish-ecr`), `.github/workflows/release.yml` (`publish-ecr` job) | Replaced Docker Hub publishing (`segment/chamber`) with a push to our **private ECR** using GitHub OIDC (no long-lived AWS keys). See [`docs/ECR.md`](./ECR.md). |
+| Version tracking | `VERSION`, `.github/workflows/release.yml` | Base version lives in a `VERSION` file, bumped by hand via PR. The `Release` workflow (manual `workflow_dispatch`, **no version/tag input**) reads it and auto-increments the `-reevo.N` build suffix from the tags already in ECR. |
+| Release artifacts | `Makefile.release` (`dist`), `.github/workflows/build.yml`, `.github/workflows/release.yml` | Dropped `.deb`/`.rpm` packaging (nfpm) and GitHub Releases — the fork ships **only** the ECR image. `dist` still builds the raw binaries + sha256sums for CI. |
 | Action pinning | `.github/workflows/*.yml` | All third-party actions upgraded to their latest release and pinned to a full commit SHA (with a `# vX.Y.Z` comment) for supply-chain hardening. When bumping, update both the SHA and the comment. |
 | Docs | `docs/ECR.md`, `docs/FORK.md` | Fork-specific operational docs. |
 
@@ -59,8 +61,9 @@ we adopt stable points.
    ```
 5. Resolve conflicts **favoring ours** for the files in the divergence ledger; take upstream
    everywhere else.
-6. `go mod tidy && make test`, build the image locally, open a PR. On merge, cut a new
-   `v<upstream-version>-reevo.N` tag → this triggers the ECR publish (see [`docs/ECR.md`](./ECR.md)).
+6. `go mod tidy && make test`, build the image locally, open a PR. On merge, set `VERSION` to the new
+   upstream base and run the `Release` workflow → this publishes the image (auto-incrementing
+   `-reevo.N`) to ECR (see [`docs/ECR.md`](./ECR.md)).
 
 ### Assessment rubric — what to bring in
 
