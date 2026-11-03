@@ -15,7 +15,7 @@ of truth when resolving an upstream merge conflict (resolve **in our favor** for
 
 | Area | File(s) | What we changed / why |
 | --- | --- | --- |
-| Go toolchain | `Dockerfile` (`FROM golang:…-alpine`) | Pinned to the latest stable Go (currently `1.27.0`) so released binaries/images are built with a supported, patched toolchain. |
+| Go toolchain | `Dockerfile` (`FROM golang:…-alpine`) | Pinned to the latest stable Go (currently `1.27.3`) so released binaries/images are built with a supported, patched toolchain. |
 | Go CI matrix | `.github/workflows/build.yml`, `.github/workflows/release.yml` | Test/build/release on the two Go majors still in Go's security-support window (currently `1.27.x`, `1.26.x`). |
 | Go module floor | `go.mod` (`go` directive) | Set to the oldest major we test (currently `1.26.0`). |
 | Image registry | `Makefile.release` (`publish-ecr`), `.github/workflows/release.yml` (`publish-ecr` job) | Replaced Docker Hub publishing (`segment/chamber`) with a push to our **private ECR** using GitHub OIDC (no long-lived AWS keys). See [`docs/ECR.md`](./ECR.md). |
